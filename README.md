@@ -62,9 +62,9 @@ flowchart LR
 ## 🔒 Engineering Highlights
 
 ### 1. Receipt Verification Pipeline (main payment path)
-Every order gets a unique payable amount. The customer pays by direct transfer and uploads the receipt, which then goes through several layers:
+Every manual-transfer order gets a unique payable amount. The customer pays by direct transfer and uploads the receipt, which then goes through several layers:
 
-1. **Input validation:** a MIME-type whitelist for document uploads at the bot, plus size and pixel-count limits enforced inside the OCR service.
+1. **Input validation:** a MIME-type whitelist for document uploads at the bot, plus a file-size limit and a pixel cap (guarding against decompression bombs) enforced inside the OCR service.
 2. **Self-hosted OCR:** text and layout extraction with RapidOCR, so receipt images stay on the operator's own infrastructure.
 3. **Business-rule checks:** recipient, unique amount, and success status must all match.
 4. **Duplicate defenses:** exact-match and perceptual hashing, plus a semantic fingerprint of transaction identifiers.
@@ -128,11 +128,10 @@ GRANT  ALL ON <table> TO service_role;
 ```
 
 ### 6. Optional Payment Gateway Adapters
-Seven provider adapters exist for tenants who prefer gateway-confirmed payments. They sit off the main path, and when enabled they follow zero-trust rules:
+Seven provider adapters exist for tenants who prefer gateway-confirmed payments. One provider is active per tenant, and the whole layer is off the main path. When enabled:
 
-- Every callback to `/webhook/payment` is treated as hostile until verified.
-- Provider-specific signature verification, compared in constant time (`crypto.timingSafeEqual`).
-- Idempotent fulfillment: an order already in a terminal state (`PAID` / `DELIVERED` / `CANCELLED`) is ignored, so replayed callbacks cannot double-deliver.
+- Every callback to `/webhook/payment` is treated as hostile until verified, using the scheme each provider supports: HMAC or hash signature checks, server-side re-verification through the provider's API, or status polling.
+- **Idempotent fulfillment:** an order already in a terminal state (`PAID` / `DELIVERED` / `CANCELLED`) is ignored, so replayed callbacks cannot double-deliver.
 
 ### 7. Webhook Hardening & Auto-Heal
 - Telegram updates are accepted only with a matching secret-token header, compared in constant time.
@@ -174,7 +173,7 @@ sequenceDiagram
     alt low-value order, all checks pass
         Bot-->>C: Final confirmation step
         C->>Bot: Confirms
-        Bot->>DB: Mark PAID, deliver
+        Bot->>DB: Mark PAID, deliver, mark DELIVERED
         Bot-->>C: Product delivered
     else high-value, top-up or anomaly
         Bot->>A: Escalate with reasons
@@ -208,7 +207,6 @@ V1 is documented in [`saas-infrastructure-core`](https://github.com/hugogustaaf/
 | Channels | Telegram + WhatsApp | Telegram only, deeper feature set |
 | Inventory | Row-level locking RPC | Booking + `SKIP LOCKED` claim + automatic release of unpaid stock |
 | Tenancy | Multi-tenant | Provisioned fleet: process and database per tenant, with deploy and fleet-migration tooling |
-| Gateway callback check | Direct string comparison | Constant-time comparison |
 | Data plane | Not documented | Row Level Security, default-deny for public roles |
 | Ingress | Nginx | Nginx or Cloudflare Tunnel |
 
